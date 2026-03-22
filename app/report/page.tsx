@@ -145,34 +145,21 @@ function ReportContent() {
         }),
       });
       
-      if (aiRes.ok) {
-        const aiContent = await aiRes.json();
-        setAiSummary(
-          `${aiContent.sprintSummary || ""}\n\n` +
-          `Velocity: ${aiContent.velocityNote || ""}\n\n` +
-          `Highlights:\n${(aiContent.highlights || []).map((h: string) => `• ${h}`).join("\n")}\n\n` +
-          `Recommendations:\n${(aiContent.recommendations || []).map((r: string) => `• ${r}`).join("\n")}`
-        );
-      } else {
-        throw new Error("AI generation failed");
+      if (!aiRes.ok) {
+        throw new Error("Failed to generate AI summary. Please try again.");
       }
+      
+      const aiContent = await aiRes.json();
+      setAiSummary(
+        `${aiContent.sprintSummary || ""}\n\n` +
+        `Velocity: ${aiContent.velocityNote || ""}\n\n` +
+        `Highlights:\n${(aiContent.highlights || []).map((h: string) => `• ${h}`).join("\n")}\n\n` +
+        `Recommendations:\n${(aiContent.recommendations || []).map((r: string) => `• ${r}`).join("\n")}`
+      );
     } catch (error) {
       console.error("AI generation error:", error);
-      // Fallback to basic summary
-      const totalTasks = projects.reduce((acc, p) => acc + (p.tasks?.length || 0), 0);
-      const completedTasks = projects.reduce(
-        (acc, p) => acc + (p.tasks?.filter((t: any) => t.status === "Done").length || 0),
-        0
-      );
-      const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-
-      setAiSummary(
-        `${sprint?.name} concluded with a ${completionRate}% task completion rate. ` +
-        `Out of ${totalTasks} total tasks, ${completedTasks} were successfully completed. ` +
-        `The team demonstrated strong collaboration across ${projects.length} projects. ` +
-        `Key achievements include timely delivery of critical features and effective resolution of blockers. ` +
-        `Velocity trends show positive momentum heading into the next sprint cycle.`
-      );
+      alert("Failed to generate AI summary. Please check your API keys and try again.");
+      setAiSummary("");
     } finally {
       setIsGenerating(false);
     }
