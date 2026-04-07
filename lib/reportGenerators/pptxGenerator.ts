@@ -87,7 +87,7 @@ function metricCard(
 
 // ─── Main generator ───────────────────────────────────────────────────────────
 
-export async function generatePptx(sprintData: any, ai: any): Promise<Buffer> {
+export async function generatePptx(sprintData: any, ai: any, includeBlockerNotes: boolean = true): Promise<Buffer> {
   const prs = new pptxgen();
   prs.layout = "LAYOUT_WIDE"; // 13.3" × 7.5"
   prs.theme = { headFontFace: "Calibri", bodyFontFace: "Calibri" };
@@ -315,34 +315,36 @@ export async function generatePptx(sprintData: any, ai: any): Promise<Buffer> {
       });
     });
 
-    // Right column — Risks
-    s.addShape(prs.ShapeType.rect, {
-      x: 6.8, y: 1.2, w: 6.1, h: 5.9,
-      fill: { color: P.WHITE },
-      line: { color: P.BORDER, pt: 1 },
-      shadow: makeShadow(),
-    });
-    s.addShape(prs.ShapeType.rect, {
-      x: 6.8, y: 1.2, w: 6.1, h: 0.55,
-      fill: { color: P.ROSE },
-      line: { color: P.ROSE },
-    });
-    s.addText("⚠  RISKS & BLOCKERS", {
-      x: 6.95, y: 1.2, w: 5.8, h: 0.55,
-      fontSize: 13, bold: true, color: P.WHITE, valign: "middle", margin: 0,
-    });
-    (ai.risks || []).slice(0, 6).forEach((r: string, i: number) => {
-      const y = 1.95 + i * 0.8;
-      s.addShape(prs.ShapeType.ellipse, {
-        x: 7.05, y: y + 0.05, w: 0.28, h: 0.28,
-        fill: { color: P.ROSE, transparency: 80 },
+    // Right column — Risks (conditional)
+    if (includeBlockerNotes) {
+      s.addShape(prs.ShapeType.rect, {
+        x: 6.8, y: 1.2, w: 6.1, h: 5.9,
+        fill: { color: P.WHITE },
+        line: { color: P.BORDER, pt: 1 },
+        shadow: makeShadow(),
+      });
+      s.addShape(prs.ShapeType.rect, {
+        x: 6.8, y: 1.2, w: 6.1, h: 0.55,
+        fill: { color: P.ROSE },
         line: { color: P.ROSE },
       });
-      s.addText(r, {
-        x: 7.5, y, w: 5.2, h: 0.7,
-        fontSize: 13, color: P.NAVY, wrap: true, valign: "middle",
+      s.addText("⚠  RISKS & BLOCKERS", {
+        x: 6.95, y: 1.2, w: 5.8, h: 0.55,
+        fontSize: 13, bold: true, color: P.WHITE, valign: "middle", margin: 0,
       });
-    });
+      (ai.risks || []).slice(0, 6).forEach((r: string, i: number) => {
+        const y = 1.95 + i * 0.8;
+        s.addShape(prs.ShapeType.ellipse, {
+          x: 7.05, y: y + 0.05, w: 0.28, h: 0.28,
+          fill: { color: P.ROSE, transparency: 80 },
+          line: { color: P.ROSE },
+        });
+        s.addText(r, {
+          x: 7.5, y, w: 5.2, h: 0.7,
+          fontSize: 13, color: P.NAVY, wrap: true, valign: "middle",
+        });
+      });
+    }
   }
 
   // ── Slide 5 — Team Performance ─────────────────────────────────────────────

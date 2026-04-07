@@ -157,7 +157,7 @@ function spacer(pt = 160): Paragraph {
 
 // ─── Main generator ───────────────────────────────────────────────────────────
 
-export async function generateDocx(sprintData: any, ai: any): Promise<Buffer> {
+export async function generateDocx(sprintData: any, ai: any, includeBlockerNotes: boolean = true): Promise<Buffer> {
   const rate = Math.round((sprintData.completedTasks / sprintData.totalTasks) * 100);
 
   // ── Metrics table ─────────────────────────────────────────────────────────
@@ -459,12 +459,13 @@ export async function generateDocx(sprintData: any, ai: any): Promise<Buffer> {
           // ── Highlights ────────────────────────────────────────────────────
           sectionHeading("Highlights"),
           ...highlightParas,
-          spacer(200),
-
-          // ── Risks & Blockers ──────────────────────────────────────────────
-          sectionHeading("Risks & Blockers"),
-          ...riskParas,
-          spacer(200),
+          ...(includeBlockerNotes ? [
+            spacer(200),
+            // ── Risks & Blockers ──────────────────────────────────────────────
+            sectionHeading("Risks & Blockers"),
+            ...riskParas,
+            spacer(200),
+          ] : []),
 
           // Page break before team
           new Paragraph({ children: [new PageBreak()] }),

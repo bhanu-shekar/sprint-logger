@@ -22,10 +22,16 @@ export async function PUT(
   await connectDB();
   const { id } = await params;
   const body = await request.json();
-  const member = await Member.findByIdAndUpdate(id, body, { new: true });
+
+  const member = await Member.findById(id);
   if (!member) {
     return Response.json({ error: "Member not found" }, { status: 404 });
   }
+
+  member.set(body);               // uses Mongoose setters — change detection fires properly
+  member.markModified("avatar");  // mark the whole avatar object, not just config
+  await member.save();
+
   return Response.json(member);
 }
 

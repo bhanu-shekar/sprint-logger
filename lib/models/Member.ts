@@ -14,7 +14,7 @@ const MemberSchema = new mongoose.Schema({
   },
   avatar: {
     kind:   { type: String, enum: ["nice", "initials"], default: "nice" },
-    config: { type: Object, default: {} },
+    config: { type: mongoose.Schema.Types.Mixed, default: {}  },
     seed:   { type: String, default: "default" },
   },
   gradientIndex: { type: Number, default: 0 },

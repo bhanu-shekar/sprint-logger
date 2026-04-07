@@ -11,6 +11,7 @@ import Badge from "./components/Badge";
 import TaskModal from "./components/TaskModal";
 import SprintModal from "./components/SprintModal";
 import SprintSelector from "./components/SprintSelector";
+import LoadingSpinner from "./components/LoadingSpinner";
 
 interface Member {
   _id: string;
@@ -511,10 +512,7 @@ function SprintBoardPageWrapper() {
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-[#f7f9fb] flex items-center justify-center">
-        <div className="text-center">
-          <span className="material-symbols-outlined text-4xl text-indigo-600 animate-spin">progress_activity</span>
-          <p className="mt-4 text-gray-600 font-medium">Loading sprint...</p>
-        </div>
+        <LoadingSpinner size="lg" text="Loading sprint..." />
       </div>
     }>
       <SprintBoardPage />
