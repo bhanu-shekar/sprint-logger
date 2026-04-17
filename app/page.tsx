@@ -2,15 +2,36 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import Navbar from "./components/Navbar";
-import ProjectModal from "./components/ProjectModal";
 import ProjectBlock from "./components/ProjectBlock";
 import TeamWorkload from "./components/TeamWorkload";
 import Button from "./components/Button";
 import Badge from "./components/Badge";
-import TaskModal from "./components/TaskModal";
-import SprintModal from "./components/SprintModal";
 import SprintSelector from "./components/SprintSelector";
+import LoadingSpinner from "./components/LoadingSpinner";
+
+const ModalLoadingPlaceholder = () => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+    <div className="relative bg-white rounded-2xl shadow-2xl p-8 flex items-center justify-center">
+      <LoadingSpinner size="lg" text="Loading..." />
+    </div>
+  </div>
+);
+
+const ProjectModal = dynamic(() => import("./components/ProjectModal"), {
+  ssr: false,
+  loading: ModalLoadingPlaceholder
+});
+const TaskModal = dynamic(() => import("./components/TaskModal"), {
+  ssr: false,
+  loading: ModalLoadingPlaceholder
+});
+const SprintModal = dynamic(() => import("./components/SprintModal"), {
+  ssr: false,
+  loading: ModalLoadingPlaceholder
+});
 
 interface Member {
   _id: string;
@@ -104,6 +125,9 @@ function SprintBoardPage() {
 
   const fetchData = async () => {
     try {
+      // Start members fetch concurrently without blocking sprints
+      const membersPromise = fetch("/api/members").then(res => res.json());
+
       const sprintsRes = await fetch("/api/sprints?limit=20");
       const sprintsData = await sprintsRes.json();
       setSprints(sprintsData);
@@ -119,20 +143,15 @@ function SprintBoardPage() {
       if (initialSprintId) {
         setCurrentSprintId(initialSprintId);
         // Fetch projects and tasks for this sprint
-        const [projectsRes, tasksRes] = await Promise.all([
-          fetch(`/api/projects?sprintId=${initialSprintId}`),
-          fetch(`/api/tasks?sprintId=${initialSprintId}`),
-        ]);
         const [projectsData, tasksData] = await Promise.all([
-          projectsRes.json(),
-          tasksRes.json(),
+          fetch(`/api/projects?sprintId=${initialSprintId}`).then(res => res.json()),
+          fetch(`/api/tasks?sprintId=${initialSprintId}`).then(res => res.json()),
         ]);
         setProjects(projectsData);
         setTasks(tasksData);
       }
       
-      const membersRes = await fetch("/api/members");
-      const membersData = await membersRes.json();
+      const membersData = await membersPromise;
       setMembers(membersData);
     } catch (error) {
       console.error("Failed to fetch data:", error);
@@ -511,10 +530,7 @@ function SprintBoardPageWrapper() {
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-[#f7f9fb] flex items-center justify-center">
-        <div className="text-center">
-          <span className="material-symbols-outlined text-4xl text-indigo-600 animate-spin">progress_activity</span>
-          <p className="mt-4 text-gray-600 font-medium">Loading sprint...</p>
-        </div>
+        <LoadingSpinner size="lg" text="Loading sprint..." />
       </div>
     }>
       <SprintBoardPage />

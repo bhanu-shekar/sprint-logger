@@ -168,7 +168,7 @@ export default function MemberDrawer({ isOpen, onClose, onSave, editingMember }:
         // Regenerate config from seed so it's always consistent
         const config = av.seed ? genConfig(av.seed) : (av.config ?? genConfig("default"));
         setAvatar({ kind: "nice", config, seed: av.seed });
-        setPickerTab("presets");
+        setPickerTab(av.seed ? "presets" : "customize");
       } else if (av?.kind === "initials") {
         setAvatar({ kind: "initials" });
         setPickerTab("initials");
@@ -191,7 +191,8 @@ export default function MemberDrawer({ isOpen, onClose, onSave, editingMember }:
   const cfg = avatar.kind === "nice" ? avatar.config : genConfig("default");
 
   const updateCfg = (patch: Partial<NiceConfig>) => {
-    setAvatar({ kind: "nice", config: { ...cfg, ...patch }, seed: avatar.kind === "nice" ? avatar.seed : undefined });
+    // Remove seed when customizing - customized avatars don't have a seed
+    setAvatar({ kind: "nice", config: { ...cfg, ...patch }, seed: undefined });
   };
 
   const handleSubmit = () => {

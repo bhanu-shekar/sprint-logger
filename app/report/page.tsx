@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Navbar from "../components/Navbar";
-import Button from "../components/Button";
 
 interface Sprint {
   _id: string;
@@ -30,6 +29,12 @@ interface Task {
   timeUnit: string;
 }
 
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+  timestamp?: Date;
+}
+
 function ReportContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -43,11 +48,23 @@ function ReportContent() {
   const [includeBlockerNotes, setIncludeBlockerNotes] = useState(false);
   const [downloadingFormat, setDownloadingFormat] = useState<"docx" | "pptx" | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadStage, setDownloadStage] = useState("");
+
+  // Chat state
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (sprintId) {
-      fetchSprintData();
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
+  }, [chatMessages, isChatLoading]);
+
+  useEffect(() => {
+    if (sprintId) fetchSprintData();
   }, [sprintId]);
 
   const fetchSprintData = async () => {
@@ -56,10 +73,8 @@ function ReportContent() {
         fetch(`/api/sprints/${sprintId}`),
         fetch(`/api/projects?sprintId=${sprintId}`),
       ]);
-      const sprintData = await sprintRes.json();
-      const projectsData = await projectsRes.json();
-      setSprint(sprintData);
-      setProjects(projectsData);
+      setSprint(await sprintRes.json());
+      setProjects(await projectsRes.json());
     } catch (error) {
       console.error("Failed to fetch sprint data:", error);
     }
@@ -67,99 +82,31 @@ function ReportContent() {
 
   const handleGenerateSummary = async () => {
     if (!sprintId) return;
-    
     setIsGenerating(true);
     try {
-      // Fetch sprint data
-      const [sprintRes, projectsRes] = await Promise.all([
-        fetch(`/api/sprints/${sprintId}`),
-        fetch(`/api/projects?sprintId=${sprintId}`),
-      ]);
-      
-      const sprint = await sprintRes.json();
-      const projects = await projectsRes.json();
-      
-      // Fetch tasks for each project
-      const tasksRes = await fetch(`/api/tasks?sprintId=${sprintId}`);
-      const tasks = await tasksRes.json();
-      
-      // Fetch members
-      const membersRes = await fetch("/api/members");
-      const members = await membersRes.json();
-      
-      // Shape data for AI
-      const sprintData = {
-        sprintName: sprint.name,
-        startDate: new Date(sprint.startDate).toLocaleDateString("en-US", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        }),
-        endDate: new Date(sprint.endDate).toLocaleDateString("en-US", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        }),
-        totalTasks: tasks.length,
-        completedTasks: tasks.filter((t: any) => t.status === "Done").length,
-        inProgressTasks: tasks.filter((t: any) => t.status === "In Progress").length,
-        todoTasks: tasks.filter((t: any) => t.status === "To Do" || t.status === "Review").length,
-        projects: projects.map((p: any) => ({
-          name: p.name,
-          status: p.status,
-          tasks: tasks
-            .filter((t: any) => t.projectId?.toString() === p._id.toString())
-            .map((t: any) => ({
-              title: t.title,
-              type: t.type,
-              status: t.status,
-              timeValue: t.timeValue,
-              timeUnit: t.timeUnit,
-              assignees: (t.assigneeIds || []).map((a: any) => a.name),
-            })),
-        })),
-        memberWorkload: members.map((m: any) => {
-          const memberTasks = tasks.filter((t: any) =>
-            (t.assigneeIds || []).some((a: any) => a._id?.toString() === m._id.toString())
-          );
-          const totalHours = memberTasks.reduce((sum: number, t: any) => {
-            return sum + (t.timeUnit === "d" ? t.timeValue * 8 : t.timeValue);
-          }, 0);
-          return {
-            name: m.name,
-            role: m.role,
-            taskCount: memberTasks.length,
-            totalHours,
-          };
-        }),
-      };
-      
-      // Call AI report API
       const aiRes = await fetch("/api/generate-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          format: "docx", 
-          sprintId,
-          generateOnly: true // Flag to indicate we only want AI content, not file
-        }),
+        body: JSON.stringify({ format: "docx", sprintId, generateOnly: true }),
       });
-      
-      if (!aiRes.ok) {
-        throw new Error("Failed to generate AI summary. Please try again.");
-      }
-      
+      if (!aiRes.ok) throw new Error("Failed to generate AI summary.");
       const aiContent = await aiRes.json();
-      setAiSummary(
+      const summary =
         `${aiContent.sprintSummary || ""}\n\n` +
         `Velocity: ${aiContent.velocityNote || ""}\n\n` +
         `Highlights:\n${(aiContent.highlights || []).map((h: string) => `• ${h}`).join("\n")}\n\n` +
-        `Recommendations:\n${(aiContent.recommendations || []).map((r: string) => `• ${r}`).join("\n")}`
-      );
+        `Recommendations:\n${(aiContent.recommendations || []).map((r: string) => `• ${r}`).join("\n")}`;
+      setAiSummary(summary);
+      setChatMessages([
+        {
+          role: "assistant",
+          content: "Summary generated! Ask me to refine tone, add context, highlight specific projects, or adjust any section.",
+          timestamp: new Date(),
+        },
+      ]);
     } catch (error) {
       console.error("AI generation error:", error);
-      alert("Failed to generate AI summary. Please check your API keys and try again.");
-      setAiSummary("");
+      alert("Failed to generate AI summary.");
     } finally {
       setIsGenerating(false);
     }
@@ -167,434 +114,555 @@ function ReportContent() {
 
   const handleDownload = async (format: "docx" | "pptx") => {
     if (!sprintId) return;
-
     setDownloadingFormat(format);
     setDownloadProgress(0);
-
-    // Animate progress
-    const progressInterval = setInterval(() => {
-      setDownloadProgress((prev) => {
-        // Slow down as we approach 100%
-        const increment = Math.max(1, (100 - prev) * 0.1);
-        const newProgress = prev + increment;
-        return newProgress > 95 ? 95 : newProgress; // Cap at 95% until download completes
-      });
-    }, 200);
-
+    setDownloadStage("Initializing...");
     try {
       const response = await fetch("/api/generate-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, sprintId }),
+        body: JSON.stringify({
+          format, sprintId, stream: true,
+          includeAISummary, includeBlockerNotes,
+          aiSummary: includeAISummary ? aiSummary : undefined,
+        }),
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to generate report");
+      if (!response.ok) throw new Error("Failed to generate report");
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fileData: string | null = null;
+      let fileFormat: string | null = null;
+      let filename: string | null = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "progress") { setDownloadProgress(data.percent); setDownloadStage(data.stage); }
+              else if (data.type === "file") { fileData = data.data; fileFormat = data.format; filename = data.filename; }
+            } catch {}
+          }
+        }
       }
-
-      // Complete progress
-      setDownloadProgress(100);
-      
-      // Create blob and download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `sprint-report-${sprint?.name?.replace(/\s+/g, "-") || "report"}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      
-      // Small delay to show 100%
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (fileData && fileFormat && filename) {
+        setDownloadStage("Downloading...");
+        const byteCharacters = atob(fileData);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+        const blob = new Blob([new Uint8Array(byteNumbers)], {
+          type: fileFormat === "docx"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); window.URL.revokeObjectURL(url);
+        setDownloadStage("Complete!"); setDownloadProgress(100);
+        await new Promise((r) => setTimeout(r, 800));
+      }
     } catch (error) {
       console.error("Download error:", error);
       alert("Failed to generate report. Please try again.");
     } finally {
-      clearInterval(progressInterval);
-      setDownloadingFormat(null);
-      setDownloadProgress(0);
+      setDownloadingFormat(null); setDownloadProgress(0); setDownloadStage("");
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+  const handleSendChat = async () => {
+    if (!chatInput.trim() || !sprintId || !aiSummary) return;
+    const userMessage = chatInput.trim();
+    setChatInput("");
+    setIsChatLoading(true);
+    
+    // Add user message to chat
+    setChatMessages((prev) => [...prev, { role: "user", content: userMessage, timestamp: new Date() }]);
+    
+    try {
+      const response = await fetch("/api/chat-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sprintId,
+          currentSummary: aiSummary,
+          message: userMessage,
+          conversationHistory: chatMessages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to get response");
+      const data = await response.json();
+      
+      // Apply the AI response directly to the center summary
+      if (data.response) {
+        setAiSummary(data.response);
+      }
+      
+      // Show compact confirmation in chat
+      setChatMessages((prev) => [...prev, {
+        role: "assistant",
+        content: "✓ I've updated the summary. Try these:",
+        timestamp: new Date(),
+      }]);
+    } catch {
+      setChatMessages((prev) => [...prev, {
+        role: "assistant",
+        content: "Sorry, I ran into an error. Please try again.",
+        timestamp: new Date(),
+      }]);
+    } finally {
+      setIsChatLoading(false);
+    }
   };
 
+  const formatDate = (dateStr: string) =>
+    new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+  const wordCount = aiSummary.trim().split(/\s+/).filter(Boolean).length;
+
   return (
-    <div className="min-h-screen bg-[#f7f9fb]">
+    <div className="min-h-screen bg-[#f0f2f7] flex flex-col">
       <Navbar variant="board" />
 
-      <main className="pt-32 pb-20 px-6">
-        <div className="max-w-[680px] mx-auto space-y-12">
-          {/* Page Header */}
-          <header className="flex items-start gap-4">
+      {/* Three-panel layout */}
+      <div className="flex flex-1 pt-16 h-screen overflow-hidden">
+
+        {/* ── LEFT SIDEBAR ─────────────────────────────── */}
+        <aside className="w-72 flex-shrink-0 flex flex-col bg-white border-r border-gray-100 overflow-y-auto">
+          {/* Back + Sprint Header */}
+          <div className="p-5 border-b border-gray-100">
             <button
               onClick={() => router.push("/")}
-              className="mt-1 p-2 rounded-lg hover:bg-surface-container-low text-gray-500 transition-colors"
+              className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors mb-4"
             >
-              <span className="material-symbols-outlined">arrow_back</span>
+              <span className="material-symbols-outlined text-base">arrow_back</span>
+              Back
             </button>
-            <div>
-              <h1 className="text-3xl font-extrabold font-manrope tracking-tight text-gray-900">
-                Generate Report
-              </h1>
-              <p className="text-gray-600 font-medium mt-1">
-                {sprint?.name || "Sprint"} Performance & Velocity Analysis
-              </p>
-              {sprint && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {formatDate(sprint.startDate)} - {formatDate(sprint.endDate)}
+            <h1 className="font-manrope font-extrabold text-gray-900 text-lg leading-tight">
+              Generate Report
+            </h1>
+            {sprint && (
+              <>
+                <p className="text-sm font-semibold text-indigo-600 mt-1">{sprint.name}</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {formatDate(sprint.startDate)} → {formatDate(sprint.endDate)}
                 </p>
-              )}
-            </div>
-          </header>
+              </>
+            )}
+          </div>
 
-          {/* Section 1: AI Summary */}
-          <section className="space-y-4">
-            <div className="bg-white p-6 rounded-xl space-y-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-teal-100 flex items-center justify-center text-teal-700">
-                    <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
-                      auto_awesome
-                    </span>
-                  </div>
-                  <h2 className="font-manrope font-bold text-lg text-gray-900">AI Sprint Summary</h2>
-                </div>
-                <span className="px-3 py-1 bg-gray-100 rounded-full text-[10px] font-bold tracking-wider text-gray-600 flex items-center gap-1.5 uppercase">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500"></span>
-                  AI Powered
-                </span>
-              </div>
-              <div className="relative">
-                <textarea
-                  value={aiSummary}
-                  onChange={(e) => setAiSummary(e.target.value)}
-                  className="w-full h-48 bg-gray-50 border-none rounded-lg p-4 text-gray-800 placeholder:text-gray-400 focus:ring-2 focus:ring-indigo-500/20 transition-all font-sans text-sm leading-relaxed resize-none"
-                  placeholder="AI summary will appear here..."
-                  readOnly={!aiSummary}
-                />
-                {isGenerating && (
-                  <div className="absolute inset-0 bg-white/80 backdrop-blur-sm rounded-lg flex items-center justify-center">
-                    <div className="flex items-center gap-3 text-indigo-600">
-                      <span className="material-symbols-outlined animate-spin">progress_activity</span>
-                      <span className="font-medium">Generating AI summary...</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <Button
-                onClick={handleGenerateSummary}
-                disabled={isGenerating}
-                className="w-full py-3 primary-gradient"
-              >
-                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>
+          {/* Generate Summary Button */}
+          <div className="p-5 border-b border-gray-100">
+            <button
+              onClick={handleGenerateSummary}
+              disabled={isGenerating}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 text-white text-sm font-bold shadow-sm hover:shadow-md hover:from-indigo-700 hover:to-indigo-600 disabled:opacity-60 transition-all"
+            >
+              {isGenerating ? (
+                <>
+                  <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                  Generate AI Summary
+                </>
+              )}
+            </button>
+            <p className="text-[10px] text-gray-400 text-center mt-2">
+              Chat on the right to refine
+            </p>
+          </div>
+
+          {/* Export Settings */}
+          <div className="p-5 border-b border-gray-100 space-y-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Export Options</p>
+
+            <Toggle
+              label="Include AI Summary"
+              description="Append generated summary"
+              checked={includeAISummary}
+              onChange={setIncludeAISummary}
+            />
+            <Toggle
+              label="Include Blocker Notes"
+              description="Detail stalled items"
+              checked={includeBlockerNotes}
+              onChange={setIncludeBlockerNotes}
+            />
+          </div>
+
+          {/* Download Buttons */}
+          <div className="p-5 space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Download</p>
+
+            <DownloadButton
+              format="docx"
+              label="Word Document"
+              ext=".docx"
+              icon="description"
+              iconColor="text-blue-600"
+              iconBg="bg-blue-50"
+              isActive={downloadingFormat === "docx"}
+              isDisabled={downloadingFormat !== null}
+              progress={downloadProgress}
+              stage={downloadStage}
+              onClick={() => handleDownload("docx")}
+            />
+            <DownloadButton
+              format="pptx"
+              label="Presentation"
+              ext=".pptx"
+              icon="present_to_all"
+              iconColor="text-orange-500"
+              iconBg="bg-orange-50"
+              isActive={downloadingFormat === "pptx"}
+              isDisabled={downloadingFormat !== null}
+              progress={downloadProgress}
+              stage={downloadStage}
+              onClick={() => handleDownload("pptx")}
+            />
+          </div>
+
+          {/* Footer */}
+          <div className="mt-auto px-5 py-4 border-t border-gray-100">
+            <p className="text-[10px] text-gray-300 font-medium">Sprint Logger © 2026</p>
+          </div>
+        </aside>
+
+        {/* ── CENTER — SUMMARY EDITOR ───────────────────── */}
+        <main className="flex-1 flex flex-col min-w-0 bg-[#f5f6fa]">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between px-8 py-3 bg-white border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-teal-100 flex items-center justify-center">
+                <span className="material-symbols-outlined text-sm text-teal-700" style={{ fontVariationSettings: "'FILL' 1" }}>
                   auto_awesome
                 </span>
-                {isGenerating ? "Generating..." : "Generate Summary"}
-              </Button>
-            </div>
-          </section>
-
-          {/* Section 2: Export Settings */}
-          <section className="space-y-4">
-            <h3 className="font-manrope font-bold text-sm text-gray-500 uppercase tracking-widest px-1">
-              Export Configuration
-            </h3>
-            <div className="bg-white rounded-xl overflow-hidden divide-y divide-gray-100 shadow-sm">
-              {/* Toggle Row 1 */}
-              <div className="flex items-center justify-between p-5">
-                <div className="space-y-0.5">
-                  <p className="font-semibold text-gray-900">Include AI Summary</p>
-                  <p className="text-xs text-gray-500">Append the generated summary to the header</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={includeAISummary}
-                    onChange={(e) => setIncludeAISummary(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
               </div>
+              <span className="text-sm font-bold text-gray-700">AI Sprint Summary</span>
+              <span className="px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 text-[10px] font-bold uppercase tracking-wider">
+                AI Powered
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {aiSummary && (
+                <span className="text-xs text-gray-400">{wordCount} words</span>
+              )}
+              {aiSummary && (
+                <span className="flex items-center gap-1 text-xs text-gray-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                  Editable
+                </span>
+              )}
+            </div>
+          </div>
 
-              {/* Toggle Row 2 */}
-              <div className="flex items-center justify-between p-5">
-                <div className="space-y-0.5">
-                  <p className="font-semibold text-gray-900">Include Blocker Notes</p>
-                  <p className="text-xs text-gray-500">Detail stalled items and resolution paths</p>
+          {/* Summary Area */}
+          <div className="flex-1 overflow-y-auto px-8 py-8">
+            {isGenerating ? (
+              <div className="h-full flex flex-col items-center justify-center gap-4 text-gray-400">
+                <div className="w-16 h-16 rounded-2xl bg-indigo-100 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-2xl text-indigo-600 animate-spin">progress_activity</span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={includeBlockerNotes}
-                    onChange={(e) => setIncludeBlockerNotes(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
+                <p className="text-sm font-medium text-gray-500">Generating your AI summary...</p>
               </div>
-            </div>
-          </section>
-
-          {/* Section 3: Download Actions */}
-          <section className="space-y-6">
-            {/* Define gradient for wave animations */}
-            <svg className="absolute opacity-0 pointer-events-none">
-              <defs>
-                <linearGradient id="waveGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#6366f1" stopOpacity="0" />
-                  <stop offset="50%" stopColor="#6366f1" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-            </svg>
-
-            <div className="grid grid-cols-2 gap-4">
-              {/* Word Report Button */}
-              <button
-                onClick={() => handleDownload("docx")}
-                disabled={downloadingFormat !== null}
-                className={`relative flex flex-col items-center justify-center gap-4 p-8 bg-white rounded-2xl border-2 transition-all shadow-sm overflow-hidden ${
-                  downloadingFormat === "docx"
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-transparent hover:border-indigo-200 group"
-                }`}
-              >
-                {/* Fluid background animation */}
-                {downloadingFormat === "docx" && (
-                  <div className="absolute inset-0 overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-indigo-600/10 to-indigo-500/5 animate-pulse" />
-                    {/* Flowing wave effect */}
-                    <svg className="absolute inset-0 w-full h-full opacity-30" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <defs>
-                        <linearGradient id="waveGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#6366f1" stopOpacity="0" />
-                          <stop offset="50%" stopColor="#6366f1" stopOpacity="0.3" />
-                          <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      <path
-                        d="M0,50 Q25,30 50,50 T100,50 L100,100 L0,100 Z"
-                        fill="url(#waveGradient)"
-                        className="animate-pulse"
-                      >
-                        <animate
-                          attributeName="d"
-                          dur="2s"
-                          repeatCount="indefinite"
-                          values="
-                            M0,50 Q25,30 50,50 T100,50 L100,100 L0,100 Z;
-                            M0,50 Q25,70 50,50 T100,50 L100,100 L0,100 Z;
-                            M0,50 Q25,30 50,50 T100,50 L100,100 L0,100 Z
-                          "
-                        />
-                      </path>
-                    </svg>
+            ) : aiSummary ? (
+              <div className="max-w-2xl mx-auto">
+                {/* Paper-style card */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                  {/* Card header */}
+                  <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between">
+                    <div>
+                      <h2 className="font-manrope font-extrabold text-gray-900 text-lg">
+                        {sprint?.name} — Sprint Report
+                      </h2>
+                      {sprint && (
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {formatDate(sprint.startDate)} – {formatDate(sprint.endDate)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-300">Click to edit</p>
+                    </div>
                   </div>
-                )}
 
-                {/* Circular Progress */}
-                <div className="relative">
-                  {downloadingFormat === "docx" ? (
-                    <div className="relative w-20 h-20">
-                      {/* Background circle */}
-                      <svg className="w-20 h-20 transform -rotate-90">
-                        <circle
-                          cx="40"
-                          cy="40"
-                          r="36"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          fill="none"
-                          className="text-indigo-100"
-                        />
-                        {/* Progress circle with smooth transition */}
-                        <circle
-                          cx="40"
-                          cy="40"
-                          r="36"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          fill="none"
-                          strokeDasharray={2 * Math.PI * 36}
-                          strokeDashoffset={2 * Math.PI * 36 * (1 - downloadProgress / 100)}
-                          strokeLinecap="round"
-                          className="text-indigo-600 transition-all duration-300 ease-out"
-                        />
-                      </svg>
-                      {/* Percentage in center */}
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-lg font-bold text-indigo-600 tabular-nums">
-                          {Math.round(downloadProgress)}%
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 group-hover:scale-110 transition-transform shadow-sm">
-                      <span className="material-symbols-outlined text-3xl">description</span>
-                    </div>
-                  )}
+                  {/* Editable content */}
+                  <textarea
+                    ref={textareaRef}
+                    value={aiSummary}
+                    onChange={(e) => setAiSummary(e.target.value)}
+                    className="w-full px-8 py-6 text-sm leading-7 text-gray-700 bg-transparent border-none outline-none resize-none font-sans"
+                    style={{ minHeight: "480px" }}
+                    placeholder="Your AI summary will appear here after generation..."
+                  />
                 </div>
-
-                <div className="text-center">
-                  <p className={`font-bold ${downloadingFormat === "docx" ? "text-indigo-700" : "text-gray-900"}`}>
-                    {downloadingFormat === "docx" ? "Generating..." : "Word Report"}
-                  </p>
-                  <p className="text-xs text-gray-500">.docx format</p>
-                </div>
-              </button>
-
-              {/* Presentation Button */}
-              <button
-                onClick={() => handleDownload("pptx")}
-                disabled={downloadingFormat !== null}
-                className={`relative flex flex-col items-center justify-center gap-4 p-8 bg-white rounded-2xl border-2 transition-all shadow-sm overflow-hidden ${
-                  downloadingFormat === "pptx"
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-transparent hover:border-indigo-200 group"
-                }`}
-              >
-                {/* Fluid background animation */}
-                {downloadingFormat === "pptx" && (
-                  <div className="absolute inset-0 overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-indigo-600/10 to-indigo-500/5 animate-pulse" />
-                    {/* Flowing wave effect */}
-                    <svg className="absolute inset-0 w-full h-full opacity-30" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <path
-                        d="M0,50 Q25,30 50,50 T100,50 L100,100 L0,100 Z"
-                        fill="url(#waveGradient)"
-                        className="animate-pulse"
-                      >
-                        <animate
-                          attributeName="d"
-                          dur="2s"
-                          repeatCount="indefinite"
-                          values="
-                            M0,50 Q25,30 50,50 T100,50 L100,100 L0,100 Z;
-                            M0,50 Q25,70 50,50 T100,50 L100,100 L0,100 Z;
-                            M0,50 Q25,30 50,50 T100,50 L100,100 L0,100 Z
-                          "
-                        />
-                      </path>
-                    </svg>
-                  </div>
-                )}
-
-                {/* Circular Progress */}
-                <div className="relative">
-                  {downloadingFormat === "pptx" ? (
-                    <div className="relative w-20 h-20">
-                      {/* Background circle */}
-                      <svg className="w-20 h-20 transform -rotate-90">
-                        <circle
-                          cx="40"
-                          cy="40"
-                          r="36"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          fill="none"
-                          className="text-indigo-100"
-                        />
-                        {/* Progress circle with smooth transition */}
-                        <circle
-                          cx="40"
-                          cy="40"
-                          r="36"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          fill="none"
-                          strokeDasharray={2 * Math.PI * 36}
-                          strokeDashoffset={2 * Math.PI * 36 * (1 - downloadProgress / 100)}
-                          strokeLinecap="round"
-                          className="text-indigo-600 transition-all duration-300 ease-out"
-                        />
-                      </svg>
-                      {/* Percentage in center */}
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-lg font-bold text-indigo-600 tabular-nums">
-                          {Math.round(downloadProgress)}%
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-orange-50 flex items-center justify-center text-orange-600 group-hover:scale-110 transition-transform shadow-sm">
-                      <span className="material-symbols-outlined text-3xl">present_to_all</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-center">
-                  <p className={`font-bold ${downloadingFormat === "pptx" ? "text-indigo-700" : "text-gray-900"}`}>
-                    {downloadingFormat === "pptx" ? "Generating..." : "Presentation"}
-                  </p>
-                  <p className="text-xs text-gray-500">.pptx format</p>
-                </div>
-              </button>
-            </div>
-
-            {/* Status indicator */}
-            {downloadingFormat && (
-              <div className="flex flex-col items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-500">
-                <div className="flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-indigo-50 to-indigo-100/50 rounded-full border border-indigo-200 shadow-sm">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-2 h-2 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-2 h-2 rounded-full bg-indigo-600 animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </div>
-                  <p className="text-sm font-medium text-indigo-700">
-                    Generating {downloadingFormat === "docx" ? "Word document" : "PowerPoint presentation"}...
-                  </p>
-                </div>
-                <p className="text-xs text-gray-500">
-                  {downloadProgress < 30 && "Preparing your report..."}
-                  {downloadProgress >= 30 && downloadProgress < 70 && "Compiling sprint data..."}
-                  {downloadProgress >= 70 && downloadProgress < 95 && "Finalizing document..."}
-                  {downloadProgress >= 95 && "Almost ready..."}
+                <p className="text-center text-[11px] text-gray-400 mt-4">
+                  You can edit directly, or use the chat to ask for changes →
                 </p>
               </div>
-            )}
-
-            {!downloadingFormat && (
-              <div className="flex flex-col items-center gap-2">
-                <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm">
-                  <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse"></span>
-                  <p className="text-xs font-medium text-gray-600">Last generated today at 09:42 AM</p>
+            ) : (
+              /* Empty state */
+              <div className="h-full flex flex-col items-center justify-center gap-6 text-center">
+                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-100 to-teal-50 flex items-center justify-center shadow-inner">
+                  <span className="material-symbols-outlined text-3xl text-indigo-400" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
                 </div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">
-                  Auto-saves to cloud storage
-                </p>
+                <div>
+                  <p className="font-manrope font-bold text-gray-700 text-lg">No summary yet</p>
+                  <p className="text-sm text-gray-400 mt-1 max-w-xs">
+                    Click <strong className="text-indigo-600">Generate AI Summary</strong> in the left panel to get started
+                  </p>
+                </div>
+                <div className="flex items-center gap-6 text-xs text-gray-300">
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm">edit</span>
+                    Editable
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm">chat</span>
+                    Chat-driven
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm">download</span>
+                    Exportable
+                  </span>
+                </div>
               </div>
             )}
-          </section>
-        </div>
-      </main>
+          </div>
+        </main>
 
-      {/* Footer Decorative */}
-      <footer className="mt-20 py-10 border-t border-gray-200/50">
-        <div className="max-w-[680px] mx-auto px-6 flex justify-between items-center text-gray-400">
-          <p className="text-xs font-medium">Sprint Logger © 2026</p>
-          <div className="flex gap-4">
-            <span className="material-symbols-outlined text-lg cursor-pointer hover:text-gray-600">security</span>
-            <span className="material-symbols-outlined text-lg cursor-pointer hover:text-gray-600">help_outline</span>
+        {/* ── RIGHT SIDEBAR — CHAT ─────────────────────── */}
+        <aside className="w-80 flex-shrink-0 flex flex-col bg-white border-l border-gray-100">
+          {/* Chat header */}
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
+                <span className="material-symbols-outlined text-sm text-indigo-600" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
+              </div>
+              <span className="text-sm font-bold text-gray-800">Refine with AI</span>
+            </div>
+            {chatMessages.length > 0 && (
+              <button
+                onClick={() => setChatMessages([])}
+                className="text-[10px] text-gray-400 hover:text-gray-600 transition-colors font-medium"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Prompt chips */}
+          {chatMessages.length === 0 && (
+            <div className="px-4 pt-4 space-y-2">
+              <p className="text-[10px] uppercase tracking-widest text-gray-400 font-bold px-1">Try asking</p>
+              {[
+                "Make the tone more executive-friendly",
+                "Highlight risks and blockers",
+                "Shorten to 3 bullet points",
+                "Add a velocity trend note",
+              ].map((chip) => (
+                <button
+                  key={chip}
+                  onClick={() => { setChatInput(chip); }}
+                  className="w-full text-left text-xs text-gray-600 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 border border-gray-100 hover:border-indigo-200 rounded-lg px-3 py-2 transition-all"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Dynamic suggestions after AI response */}
+          {chatMessages.length > 0 && chatMessages[chatMessages.length - 1]?.role === "assistant" && (
+            <div className="px-4 pb-2 space-y-2">
+              {[
+                "Make it more concise",
+                "Add specific project details",
+                "Emphasize team achievements",
+                "Rewrite as bullet points",
+              ].map((chip) => (
+                <button
+                  key={chip}
+                  onClick={() => { setChatInput(chip); }}
+                  className="w-full text-left text-xs text-gray-600 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 border border-gray-100 hover:border-indigo-200 rounded-lg px-3 py-2 transition-all"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Messages */}
+          <div
+            ref={chatContainerRef}
+            className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
+          >
+            {chatMessages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${
+                    msg.role === "user"
+                      ? "bg-indigo-600 text-white rounded-br-sm"
+                      : "bg-gray-50 text-gray-700 border border-gray-100 rounded-bl-sm"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {msg.timestamp && (
+                    <p className={`text-[9px] mt-1.5 ${msg.role === "user" ? "text-indigo-200" : "text-gray-400"}`}>
+                      {msg.timestamp.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {isChatLoading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-50 border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
+                  <div className="flex gap-1 items-center">
+                    {[0, 150, 300].map((delay) => (
+                      <span
+                        key={delay}
+                        className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                        style={{ animationDelay: `${delay}ms` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Chat Input */}
+          <div className="p-4 border-t border-gray-100">
+            {!aiSummary && (
+              <p className="text-[10px] text-gray-400 text-center mb-2">
+                Generate a summary first to start chatting
+              </p>
+            )}
+            <div className="flex gap-2 items-end">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendChat();
+                  }
+                }}
+                placeholder={aiSummary ? "Ask me to refine the summary..." : "Generate summary first..."}
+                disabled={isChatLoading || !aiSummary}
+                rows={2}
+                className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 disabled:opacity-50 resize-none transition-all leading-relaxed"
+              />
+              <button
+                onClick={handleSendChat}
+                disabled={isChatLoading || !chatInput.trim() || !aiSummary}
+                className="flex-shrink-0 w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {isChatLoading ? (
+                  <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                ) : (
+                  <span className="material-symbols-outlined text-sm">send</span>
+                )}
+              </button>
+            </div>
+            <p className="text-[9px] text-gray-300 mt-1.5 text-center">
+              Enter to send · Shift+Enter for newline
+            </p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/* ── Sub-components ── */
+
+function Toggle({
+  label, description, checked, onChange,
+}: {
+  label: string; description: string; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <p className="text-xs font-semibold text-gray-800">{label}</p>
+        <p className="text-[10px] text-gray-400">{description}</p>
+      </div>
+      <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="sr-only peer" />
+        <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+      </label>
+    </div>
+  );
+}
+
+function DownloadButton({
+  label, ext, icon, iconColor, iconBg,
+  isActive, isDisabled, progress, stage, onClick,
+}: {
+  format: string; label: string; ext: string; icon: string;
+  iconColor: string; iconBg: string;
+  isActive: boolean; isDisabled: boolean; progress: number; stage: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={isDisabled}
+      className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
+        isActive
+          ? "border-indigo-300 bg-indigo-50"
+          : "border-gray-100 bg-gray-50 hover:border-indigo-200 hover:bg-indigo-50/40"
+      } disabled:cursor-not-allowed`}
+    >
+      {isActive ? (
+        <div className="relative w-9 h-9 flex-shrink-0">
+          <svg className="w-9 h-9 transform -rotate-90">
+            <circle cx="18" cy="18" r="14" stroke="currentColor" strokeWidth="3" fill="none" className="text-indigo-100" />
+            <circle
+              cx="18" cy="18" r="14"
+              stroke="currentColor" strokeWidth="3" fill="none"
+              strokeDasharray={2 * Math.PI * 14}
+              strokeDashoffset={2 * Math.PI * 14 * (1 - progress / 100)}
+              strokeLinecap="round"
+              className="text-indigo-600 transition-all duration-300 ease-out"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-[9px] font-bold text-indigo-600">{Math.round(progress)}%</span>
           </div>
         </div>
-      </footer>
-    </div>
+      ) : (
+        <div className={`w-9 h-9 rounded-lg ${iconBg} flex items-center justify-center flex-shrink-0`}>
+          <span className={`material-symbols-outlined text-lg ${iconColor}`}>{icon}</span>
+        </div>
+      )}
+      <div className="text-left">
+        <p className={`text-xs font-bold ${isActive ? "text-indigo-700" : "text-gray-800"}`}>
+          {isActive ? stage || "Generating..." : label}
+        </p>
+        <p className="text-[10px] text-gray-400">{ext}</p>
+      </div>
+    </button>
   );
 }
 
 export default function ReportPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-[#f7f9fb] flex items-center justify-center">
+      <div className="min-h-screen bg-[#f0f2f7] flex items-center justify-center">
         <div className="text-center">
           <span className="material-symbols-outlined text-4xl text-indigo-600 animate-spin">progress_activity</span>
           <p className="mt-4 text-gray-600 font-medium">Loading report...</p>

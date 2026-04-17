@@ -29,5 +29,8 @@ const TaskSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+TaskSchema.index({ sprintId: 1 });
+TaskSchema.index({ projectId: 1 });
+
 export default mongoose.models.Task ||
   mongoose.model("Task", TaskSchema);
