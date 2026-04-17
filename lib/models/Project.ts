@@ -14,5 +14,7 @@ const ProjectSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+ProjectSchema.index({ sprintId: 1 });
+
 export default mongoose.models.Project ||
   mongoose.model("Project", ProjectSchema);
